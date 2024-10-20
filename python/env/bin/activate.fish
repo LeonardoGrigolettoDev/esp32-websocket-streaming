@@ -33,7 +33,7 @@ end
 # Unset irrelevant variables.
 deactivate nondestructive
 
-set -gx VIRTUAL_ENV "/home/dev/Projects/esp32_camera_webstream/python/env"
+set -gx VIRTUAL_ENV "/home/dev/Projects/esp32-websocket-streaming/python/env"
 
 set -gx _OLD_VIRTUAL_PATH $PATH
 set -gx PATH "$VIRTUAL_ENV/bin" $PATH

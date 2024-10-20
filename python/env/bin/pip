@@ -1,4 +1,4 @@
-#!/home/dev/Projects/esp32_camera_webstream/python/env/bin/python3
+#!/home/dev/Projects/esp32-websocket-streaming/python/env/bin/python3
 # -*- coding: utf-8 -*-
 import re
 import sys
