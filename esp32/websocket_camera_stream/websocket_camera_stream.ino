@@ -29,11 +29,11 @@
 
 
 
-const char* ssid     = "network-name"; // CHANGE HERE
-const char* password = "network-password"; // CHANGE HERE
+const char* ssid     = "VIVOFIBRA-A9A8"; // CHANGE HERE
+const char* password = "A41168AE93"; // CHANGE HERE
 
-const char* websockets_server_host = "192.168.1.149"; //CHANGE HERE
-const uint16_t websockets_server_port = 3001; // OPTIONAL CHANGE
+const char* websockets_server_host = "192.168.15.117"; //CHANGE HERE
+const uint16_t websockets_server_port = 8080; // OPTIONAL CHANGE
 
 camera_fb_t * fb = NULL;
 size_t _jpg_buf_len = 0;
@@ -101,7 +101,7 @@ esp_err_t init_wifi() {
   Serial.println("WiFi OK");
   Serial.println("connecting to WS: ");
   client.onMessage(onMessageCallback);
-  bool connected = client.connect(websockets_server_host, websockets_server_port, "/");
+  bool connected = client.connect(websockets_server_host, websockets_server_port, "/ws");
   if (!connected) {
     Serial.println("WS connect failed!");
     Serial.println(WiFi.localIP());
