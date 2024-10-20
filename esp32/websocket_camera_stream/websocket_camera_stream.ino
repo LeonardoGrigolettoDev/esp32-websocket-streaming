@@ -29,10 +29,10 @@
 
 
 
-const char* ssid     = "VIVOFIBRA-A9A8"; // CHANGE HERE
-const char* password = "A41168AE93"; // CHANGE HERE
+const char* ssid     = ""; // CHANGE HERE
+const char* password = ""; // CHANGE HERE
 
-const char* websockets_server_host = "192.168.15.117"; //CHANGE HERE
+const char* websockets_server_host = ""; //CHANGE HERE
 const uint16_t websockets_server_port = 8080; // OPTIONAL CHANGE
 
 camera_fb_t * fb = NULL;
