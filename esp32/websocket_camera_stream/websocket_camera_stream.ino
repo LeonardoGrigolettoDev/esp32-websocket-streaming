@@ -1,3 +1,5 @@
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
 #include "esp_camera.h"
 #include <WiFi.h>
 #include <ArduinoWebsockets.h>
@@ -27,10 +29,10 @@
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
 
-const char* ssid     = "Desktop_F6326123"; 
-const char* password = "3490371103598201"; 
-const char* server_host = "192.168.1.117"; 
-const uint16_t websockets_server_port = 8080; 
+const char* ssid     = "SUPERTEC"; 
+const char* password = "super1234"; 
+const char* server_host = "192.168.0.136"; 
+const uint16_t server_port = 8080; 
 const uint16_t mqtt_server_port = 1883; 
 
 using namespace websockets; // Adicionando o namespace para facilitar o acesso
@@ -96,7 +98,7 @@ esp_err_t init_wifi() {
 void connect_websocket() {
     Serial.println("Connecting to WebSocket...");
     wsClient.onMessage(onMessageCallback);
-    if (!wsClient.connect(server_host, websockets_server_port, "/ws")) {
+    if (!wsClient.connect(server_host, server_port, "/ws")) {
         Serial.println("WebSocket connection failed!");
     } else {
         Serial.println("WebSocket connected.");
@@ -120,30 +122,74 @@ void connect_mqtt() {
     }
 }
 
+void send_device_details() {
+    // Pegando o ID do chip ESP32
+    uint64_t chipid = ESP.getEfuseMac();  // ID único do chip
+    String macAddress = WiFi.macAddress();
+    // Criando um documento JSON
+    StaticJsonDocument<200> doc;
+    doc["device_id"] = String((uint16_t)(chipid >> 32), HEX) + String((uint32_t)chipid, HEX);  // Convertendo para string
+    doc["device_type"] = "ESP32-CAM";  // Nome do dispositivo
+    doc["status"] = "active";  // Status do dispositivo
+    doc["mac_address"] = macAddress;
+
+    // Serializando o JSON para uma string
+    String jsonPayload;
+    serializeJson(doc, jsonPayload);
+        HTTPClient http;  // Cria um objeto HTTPClient
+        
+        String serverUrl = "http://" + String(server_host) + ":" + String(server_port) + "/api/device"; // URL do servidor
+        
+        http.begin(serverUrl);  // Especifica a URL do servidor
+        http.addHeader("Content-Type", "application/json");  // Define o tipo de conteúdo como JSON
+        
+        int httpResponseCode = http.POST(jsonPayload);  // Envia a requisição POST com os dados JSON
+        
+        // Verifica o código de resposta HTTP
+        if (httpResponseCode > 0) {
+            String response = http.getString();  // Obtém a resposta do servidor
+            Serial.println("HTTP Response code: " + String(httpResponseCode));
+            Serial.println("Response: " + response);
+        } else {
+            Serial.println("Erro na requisição POST: " + String(httpResponseCode));
+        }
+
+        http.end();  // Fecha a conexão HTTP
+}
+
 // Função de configuração
 void setup() {
     Serial.begin(115200);
     init_camera();
     init_wifi();
+    send_device_details();
     connect_mqtt();      // Conectar ao MQTT primeiro
-    connect_websocket();  // Em seguida, conectar ao WebSocket
+//    connect_websocket();  // Em seguida, conectar ao WebSocket
+   
 }
 
 // Loop principal
+
 void loop() {
     // Assegura que o MQTT está conectado
     if (!mqttClient.connected()) {
-        connect_mqtt();
+        connect_mqtt();  // Função para reconectar ao MQTT se desconectado
     }
     mqttClient.loop();  // Lida com a comunicação MQTT
-
-    wsClient.poll();    // Lida com a comunicação WebSocket
-
-    camera_fb_t *fb = esp_camera_fb_get();
-    if (fb) {
-        wsClient.sendBinary((const char*) fb->buf, fb->len);
-        esp_camera_fb_return(fb);
-    } else {
-        Serial.println("Image capture failed.");
-    }
+    
+//    wsClient.poll();    // Lida com a comunicação WebSocket
+//
+//    // Captura uma imagem da câmera
+//    camera_fb_t *fb = esp_camera_fb_get();
+//    if (fb) {
+//        wsClient.sendBinary((const char*) fb->buf, fb->len);  // Envia os dados da câmera via WebSocket
+//
+//        // Retorna o buffer da imagem para liberar memória
+//        esp_camera_fb_return(fb);
+//
+//        
+//
+//    } else {
+//        Serial.println("Falha ao capturar imagem.");
+//    }
 }
