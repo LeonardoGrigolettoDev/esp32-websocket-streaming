@@ -28,12 +28,19 @@
 #define VSYNC_GPIO_NUM    25
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
+#define PUBLISH_INTERVAL 30000  // Intervalo de 30 segundos
 
-const char* ssid     = "SUPERTEC"; 
-const char* password = "super1234"; 
-const char* server_host = "192.168.0.136"; 
+const char* ssid     = "VIVOFIBRA-A9A8"; 
+const char* password = "A41168AE93"; 
+const char* server_host = "192.168.15.117"; 
 const uint16_t server_port = 8080; 
-const uint16_t mqtt_server_port = 1883; 
+const uint16_t mqtt_server_port = 1883;
+String chipid;
+String MQTT_STATUS_TOPIC;
+String MQTT_COMMAND_TOPIC;
+String macAddress = WiFi.macAddress();
+
+unsigned long lastPublishTime = 0; // Variável para armazenar o tempo da última publicação
 
 using namespace websockets; // Adicionando o namespace para facilitar o acesso
 WebsocketsClient wsClient; // Cliente WebSocket
@@ -109,11 +116,14 @@ void connect_websocket() {
 // Conecta ao MQTT
 void connect_mqtt() {
     mqttClient.setServer(server_host, mqtt_server_port);
+    
+    mqttClient.setKeepAlive(60); // Define 60 segundos como keep-alive
+
     while (!mqttClient.connected()) {
         Serial.print("Connecting to MQTT...");
-        if (mqttClient.connect("go-mqtt-client", "seu_usuario", "sua_senha")) {
+        if (mqttClient.connect("hl-mqtt-client", "seu_usuario", "sua_senha")) {
             Serial.println("MQTT connected!");
-            mqttClient.subscribe("test/topic");
+            mqttClient.subscribe(MQTT_COMMAND_TOPIC.c_str());
         } else {
             Serial.print("MQTT connection failed, error: ");
             Serial.println(mqttClient.state());
@@ -124,11 +134,11 @@ void connect_mqtt() {
 
 void send_device_details() {
     // Pegando o ID do chip ESP32
-    uint64_t chipid = ESP.getEfuseMac();  // ID único do chip
-    String macAddress = WiFi.macAddress();
+    
+    
     // Criando um documento JSON
     StaticJsonDocument<200> doc;
-    doc["device_id"] = String((uint16_t)(chipid >> 32), HEX) + String((uint32_t)chipid, HEX);  // Convertendo para string
+    doc["id"] = chipid;  // Convertendo para string
     doc["device_type"] = "ESP32-CAM";  // Nome do dispositivo
     doc["status"] = "active";  // Status do dispositivo
     doc["mac_address"] = macAddress;
@@ -160,12 +170,44 @@ void send_device_details() {
 // Função de configuração
 void setup() {
     Serial.begin(115200);
+    char chipIDBuffer[20];  // Buffer para armazenar o ID como string
+    
+    // Constrói o chip ID combinando as partes superiores e inferiores do MAC
+    sprintf(chipIDBuffer, "%04X%08X", (uint16_t)(ESP.getEfuseMac() >> 32), (uint32_t)ESP.getEfuseMac());
+    chipid = String(chipIDBuffer);  // Atribui o valor formatado à variável `chipid`
+    MQTT_STATUS_TOPIC = "device/" + chipid + "/status";
+    MQTT_COMMAND_TOPIC = "device/" + chipid + "/command";
     init_camera();
     init_wifi();
     send_device_details();
     connect_mqtt();      // Conectar ao MQTT primeiro
 //    connect_websocket();  // Em seguida, conectar ao WebSocket
    
+}
+
+void pub_device_status() {
+    // Publicação a cada 30 segundos
+    if (millis() - lastPublishTime >= PUBLISH_INTERVAL) {
+        lastPublishTime = millis(); // Atualiza o tempo da última publicação
+
+        // Monta o JSON para envio
+        StaticJsonDocument<200> doc;
+        doc["id"] = chipid;
+        doc["device_type"] = "ESP32-CAM";
+        doc["status"] = "active";
+        doc["timestamp"] = millis();
+
+        // Serializa o JSON para uma string
+        String jsonPayload;
+        serializeJson(doc, jsonPayload);
+
+        // Publica o JSON no tópico MQTT
+        mqttClient.publish(MQTT_STATUS_TOPIC.c_str(),jsonPayload.c_str());
+        Serial.println("Publicado JSON no tópico MQTT: ");
+        Serial.println(jsonPayload);
+    }
+
+    
 }
 
 // Loop principal
@@ -176,7 +218,7 @@ void loop() {
         connect_mqtt();  // Função para reconectar ao MQTT se desconectado
     }
     mqttClient.loop();  // Lida com a comunicação MQTT
-    
+    pub_device_status();
 //    wsClient.poll();    // Lida com a comunicação WebSocket
 //
 //    // Captura uma imagem da câmera
