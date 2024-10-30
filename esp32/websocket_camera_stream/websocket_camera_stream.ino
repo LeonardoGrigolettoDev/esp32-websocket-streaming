@@ -44,13 +44,85 @@ unsigned long lastPublishTime = 0; // Variável para armazenar o tempo da últim
 
 using namespace websockets; // Adicionando o namespace para facilitar o acesso
 WebsocketsClient wsClient; // Cliente WebSocket
+bool startStreaming = false; // Variável para armazenar o estado da conexão
 WiFiClient espClient;      // Cliente para o MQTT
 PubSubClient mqttClient(espClient); // Cliente MQTT
 
+void setup() {
+    Serial.begin(115200);
+    char chipIDBuffer[20];
+    sprintf(chipIDBuffer, "%04X%08X", (uint16_t)(ESP.getEfuseMac() >> 32), (uint32_t)ESP.getEfuseMac());
+    chipid = String(chipIDBuffer);
+    MQTT_STATUS_TOPIC = "device/" + chipid + "/status";
+    MQTT_COMMAND_TOPIC = "device/" + chipid + "/command";
+    init_camera();
+    init_wifi();
+    send_device_details();
+//    connect_mqtt();
+    start_websocket();
+}
+
+void loop() {
+    if (WiFi.status() != WL_CONNECTED) {
+      init_wifi();
+      }
+    if (wsClient.available()) { // Verifica se há mensagens
+        wsClient.poll(); // Escuta mensagens do servidor
+
+    } else {
+      start_websocket();  
+    }
+
+    if (startStreaming) {
+        
+        // Captura uma imagem da câmera
+        camera_fb_t *fb = esp_camera_fb_get();
+        if (fb) {
+            wsClient.sendBinary((const char*) fb->buf, fb->len);  // Envia os dados da câmera via WebSocket
+            esp_camera_fb_return(fb);  // Libera o buffer da imagem
+        } else {
+            Serial.println("Falha ao capturar imagem.");
+        }
+    }
+    
+//    if (!mqttClient.connected()) {
+//        connect_mqtt();  // Função para reconectar ao MQTT se desconectado
+//    }
+//    mqttClient.loop();  // Lida com a comunicação MQTT
+//    pub_device_status();
+    delay(100);
+}
+
 // Callback para mensagens recebidas pelo WebSocket
 void onMessageCallback(WebsocketsMessage message) {
-    Serial.print("Received message: ");
-    Serial.println(message.data());
+    Serial.println("Received: " + message.data());
+
+    // Desconstrua o JSON
+    StaticJsonDocument<200> doc; // Tamanho do documento JSON
+    DeserializationError error = deserializeJson(doc, message.data());
+
+    if (error) {
+        Serial.print(F("deserializeJson() failed: "));
+        Serial.println(error.f_str());
+        return;
+    }
+
+    // Acesse os dados do JSON
+    String device = doc["device"].as<String>(); // Obtém o valor de "device"
+    int stream = doc["stream"];         // Obtém o valor de "stream"
+
+    // Exibe os dados desconstruídos
+    Serial.println("Device: " + device);
+    Serial.println("Stream: " + String(stream));
+    if(device == chipid) {
+        if (stream == 1) {
+            startStreaming = true;
+            Serial.println("Iniciando o streaming.");
+        } else {
+            startStreaming = false;
+            Serial.println("Parando o streaming.");
+        }
+    }
 }
 
 // Inicializa a câmera
@@ -102,26 +174,33 @@ esp_err_t init_wifi() {
 }
 
 // Conecta ao WebSocket
-void connect_websocket() {
+void start_websocket() {
     Serial.println("Connecting to WebSocket...");
-    wsClient.onMessage(onMessageCallback);
-    if (!wsClient.connect(server_host, server_port, "/ws")) {
-        Serial.println("WebSocket connection failed!");
+    if (!wsClient.connect(server_host, server_port, "/device/capture/" + chipid)) {
+        Serial.println("WebSocket connection failed! (retrying in 1s)");
+        delay(1000);
+        start_websocket();
     } else {
+        wsClient.onMessage(onMessageCallback);
         Serial.println("WebSocket connected.");
-        wsClient.send("Hello from ESP32 camera stream!");
+        wsClient.send("Connected: " + chipid);
     }
+}
+
+
+void stop_websocket() {
+    Serial.println("Stopping WebSocket...");
+    wsClient.close(); // Fecha a conexão WebSocket
+    Serial.println("WebSocket disconnected.");
 }
 
 // Conecta ao MQTT
 void connect_mqtt() {
     mqttClient.setServer(server_host, mqtt_server_port);
-    
-    mqttClient.setKeepAlive(60); // Define 60 segundos como keep-alive
-
+    mqttClient.setCallback(mqtt_callback);
     while (!mqttClient.connected()) {
         Serial.print("Connecting to MQTT...");
-        if (mqttClient.connect("hl-mqtt-client", "seu_usuario", "sua_senha")) {
+        if (mqttClient.connect("hl-mqtt-client")) {
             Serial.println("MQTT connected!");
             mqttClient.subscribe(MQTT_COMMAND_TOPIC.c_str());
         } else {
@@ -132,11 +211,49 @@ void connect_mqtt() {
     }
 }
 
+void mqtt_callback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Mensagem recebida no tópico: ");
+  Serial.println(topic);
+
+  // Converte o payload para uma string
+  String jsonPayload = "";
+  for (int i = 0; i < length; i++) {
+    jsonPayload += (char)payload[i];
+  }
+  Serial.println("JSON recebido: " + jsonPayload);
+
+  // Analisa o JSON
+  StaticJsonDocument<256> doc; // Ajuste o tamanho conforme o JSON esperado
+  DeserializationError error = deserializeJson(doc, jsonPayload);
+
+  if (error) {
+    Serial.print("Erro ao analisar JSON: ");
+    Serial.println(error.c_str());
+    return;
+  }
+
+  // Percorre o JSON dinamicamente
+  for (JsonPair kv : doc.as<JsonObject>()) {
+    const char* key = kv.key().c_str();         // Pega a chave
+    const char* value = kv.value().as<const char*>(); // Pega o valor como string
+
+    Serial.print("Chave: ");
+    Serial.print(key);
+    Serial.print(" | Valor: ");
+    Serial.println(value);
+    if(strcmp(key, "stream") == 0) {
+      if(strcmp(value, "start") == 0) {
+        start_websocket();
+        } else {
+          stop_websocket();
+          }
+      }
+  }
+  
+}
+
+
 void send_device_details() {
-    // Pegando o ID do chip ESP32
-    
-    
-    // Criando um documento JSON
     StaticJsonDocument<200> doc;
     doc["id"] = chipid;  // Convertendo para string
     doc["device_type"] = "ESP32-CAM";  // Nome do dispositivo
@@ -148,14 +265,13 @@ void send_device_details() {
     serializeJson(doc, jsonPayload);
         HTTPClient http;  // Cria um objeto HTTPClient
         
-        String serverUrl = "http://" + String(server_host) + ":" + String(server_port) + "/api/device"; // URL do servidor
+        String serverUrl = "http://" + String(server_host) + ":" + String(server_port) + "/device"; // URL do servidor
         
         http.begin(serverUrl);  // Especifica a URL do servidor
         http.addHeader("Content-Type", "application/json");  // Define o tipo de conteúdo como JSON
         
         int httpResponseCode = http.POST(jsonPayload);  // Envia a requisição POST com os dados JSON
         
-        // Verifica o código de resposta HTTP
         if (httpResponseCode > 0) {
             String response = http.getString();  // Obtém a resposta do servidor
             Serial.println("HTTP Response code: " + String(httpResponseCode));
@@ -163,26 +279,7 @@ void send_device_details() {
         } else {
             Serial.println("Erro na requisição POST: " + String(httpResponseCode));
         }
-
         http.end();  // Fecha a conexão HTTP
-}
-
-// Função de configuração
-void setup() {
-    Serial.begin(115200);
-    char chipIDBuffer[20];  // Buffer para armazenar o ID como string
-    
-    // Constrói o chip ID combinando as partes superiores e inferiores do MAC
-    sprintf(chipIDBuffer, "%04X%08X", (uint16_t)(ESP.getEfuseMac() >> 32), (uint32_t)ESP.getEfuseMac());
-    chipid = String(chipIDBuffer);  // Atribui o valor formatado à variável `chipid`
-    MQTT_STATUS_TOPIC = "device/" + chipid + "/status";
-    MQTT_COMMAND_TOPIC = "device/" + chipid + "/command";
-    init_camera();
-    init_wifi();
-    send_device_details();
-    connect_mqtt();      // Conectar ao MQTT primeiro
-//    connect_websocket();  // Em seguida, conectar ao WebSocket
-   
 }
 
 void pub_device_status() {
@@ -196,7 +293,7 @@ void pub_device_status() {
         doc["device_type"] = "ESP32-CAM";
         doc["status"] = "active";
         doc["timestamp"] = millis();
-
+        doc["mac_address"] = macAddress;
         // Serializa o JSON para uma string
         String jsonPayload;
         serializeJson(doc, jsonPayload);
@@ -206,32 +303,4 @@ void pub_device_status() {
         Serial.println("Publicado JSON no tópico MQTT: ");
         Serial.println(jsonPayload);
     }
-
-    
-}
-
-// Loop principal
-
-void loop() {
-    // Assegura que o MQTT está conectado
-    if (!mqttClient.connected()) {
-        connect_mqtt();  // Função para reconectar ao MQTT se desconectado
-    }
-    mqttClient.loop();  // Lida com a comunicação MQTT
-    pub_device_status();
-//    wsClient.poll();    // Lida com a comunicação WebSocket
-//
-//    // Captura uma imagem da câmera
-//    camera_fb_t *fb = esp_camera_fb_get();
-//    if (fb) {
-//        wsClient.sendBinary((const char*) fb->buf, fb->len);  // Envia os dados da câmera via WebSocket
-//
-//        // Retorna o buffer da imagem para liberar memória
-//        esp_camera_fb_return(fb);
-//
-//        
-//
-//    } else {
-//        Serial.println("Falha ao capturar imagem.");
-//    }
 }
